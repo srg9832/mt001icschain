@@ -1,4 +1,4 @@
 # mt001icschain.github.io
 theme: jekyll-theme-minimal
-title: Octocat's homepage
-description: Bookmark this to keep an eye on my project updates!
+title: MT001 ICS Chain
+description: 
