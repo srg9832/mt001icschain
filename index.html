@@ -217,16 +217,22 @@ function applyFieldRecords(records) {
   assignStableFieldIds();
 
   const byId = {};
-  records.forEach(record => {
-    byId[record.fieldId] = record;
+  (records || []).forEach(record => {
+    if (record && record.fieldId) {
+      byId[String(record.fieldId)] = record;
+    }
   });
 
   document.querySelectorAll("input, textarea, select").forEach(el => {
-    const record = byId[el.dataset.fieldId];
-    if (record) {
-      el.value = record.value || "";
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
+    try {
+      const record = byId[el.dataset.fieldId];
+      if (record) {
+        el.value = record.value == null ? "" : String(record.value);
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    } catch (err) {
+      console.warn("Could not apply field", el.dataset.fieldId, err);
     }
   });
 }
@@ -292,7 +298,12 @@ function cloudLoadFields() {
       }
 
       applyFieldRecords(response.records || []);
-      saveToLocalStorage();
+
+      if (typeof saveToLocalStorage === "function") {
+        saveToLocalStorage();
+      } else if (typeof saveToLocalStorageSafe === "function") {
+        saveToLocalStorageSafe();
+      }
 
       const status = document.getElementById("saveStatus");
       if (status) status.textContent = "Loaded fields from Google Sheet";
@@ -327,6 +338,17 @@ if (typeof originalAddSimpleBox === "function") {
 }
 
 window.addEventListener("DOMContentLoaded", assignStableFieldIds);
+
+
+function saveToLocalStorageSafe() {
+  try {
+    if (typeof collectData === "function") {
+      localStorage.setItem("ics_chain_of_command_autosave_v1", JSON.stringify(collectData()));
+    }
+  } catch (err) {
+    console.warn("Browser local save skipped", err);
+  }
+}
 
 function autoLoadCloudFieldsOnStartup() {
   if (!GOOGLE_SHEET_WEB_APP_URL || GOOGLE_SHEET_WEB_APP_URL.includes("PASTE_YOUR")) {
