@@ -327,6 +327,20 @@ if (typeof originalAddSimpleBox === "function") {
 }
 
 window.addEventListener("DOMContentLoaded", assignStableFieldIds);
+
+function autoLoadCloudFieldsOnStartup() {
+  if (!GOOGLE_SHEET_WEB_APP_URL || GOOGLE_SHEET_WEB_APP_URL.includes("PASTE_YOUR")) {
+    return;
+  }
+
+  // Wait briefly so the page has finished creating its default fields.
+  setTimeout(() => {
+    cloudLoadFields();
+  }, 750);
+}
+
+window.addEventListener("DOMContentLoaded", autoLoadCloudFieldsOnStartup);
+
 </script>
 
 </body>
