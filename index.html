@@ -15,7 +15,7 @@
     <button class="primary" onclick="saveFieldsToSheet()">Save to Google Sheet</button>
     <button onclick="loadFieldsFromSheet(false)">Load from Google Sheet</button>
     <button onclick="window.print()">Print</button>
-    <span id="saveStatus" style="font-size:11px;color:#555;min-width:160px;">Starting...</span>
+    <span id="saveStatus" style="font-size:11px;color:#555;min-width:180px;">Starting...</span>
   </div>
 </header>
 <main>
@@ -34,17 +34,18 @@
 <dialog id="groundDialog"><div class="dialog-header"><h2>Ground Operations Branch - Additional Positions</h2><button onclick="closeDialog('groundDialog')">Close</button></div><div class="dialog-body"><div class="box" style="max-width:260px;margin-bottom:10px" data-box="Ground Operations Branch Director Detail"><div class="position-title">Ground Operations Branch Director</div><input class="field person sync-ground-director" placeholder="Name" oninput="syncGroundDirector(this.value)"/><input class="field phone sync-ground-phone" placeholder="Phone" oninput="syncGroundPhone(this.value)"/><input class="field email sync-ground-email" placeholder="Email" oninput="syncGroundEmail(this.value)"/></div><div class="button-row"><button class="primary" onclick="addDivisionColumn()">Add Division Column</button></div><div class="ground-layout" id="groundLayout"><div class="resource-column" id="unassignedResources"><h3>Unassigned Resources</h3><button onclick="addGroundTeam('unassignedResources','Single Resource / Ground Team')">Add Single Resource / Ground Team</button><button onclick="addPlaceholderResource('unassignedResources','Strike Team')">Add Strike Team</button><button onclick="addPlaceholderResource('unassignedResources','Task Force')">Add Task Force</button></div></div></div></dialog>
 <template id="simpleBoxTemplate"><div class="box nested compact dynamic-box"><div class="position-title"></div><input class="field person" placeholder="Name"/><input class="field phone" placeholder="Phone"/><input class="field email" placeholder="Email"/></div></template>
 <template id="teamTemplate"><div class="team-card dynamic-box"><h4></h4><div class="member-table"><div class="member-row"><label>Leader</label><input class="field" placeholder="GTL Name"/></div><div class="member-row"><label>Member 1</label><input class="field" placeholder="GTM Name"/></div><div class="member-row"><label>Member 2</label><input class="field" placeholder="GTM Name"/></div></div><button onclick="addMemberRow(this)">Add Member Row</button></div></template>
-
 <script>
 /*
-  ICS Chain of Command - Google Sheet Only Version
+  ICS Chain of Command - Google Sheet FIELD TABLE ONLY
 
-  Backend:
-    google_apps_script_sheet_only_backend.gs
+  This version uses ONLY Google Sheets.
+  It does NOT use browser localStorage.
+  It does NOT use JSON files.
+  It reads/writes the ICS_Fields sheet:
+    FieldId | Section | Label | Value | SortOrder | LastUpdated
 
-  This page does NOT use localStorage and does NOT use JSON backup files.
-  It loads field values from Google Sheets on page open and saves field values
-  back to Google Sheets when you click Save.
+  Confirmed deployment:
+    https://script.google.com/macros/s/AKfycbzbKVMvJDfz4LZ1gMPv1w1n3FAtAvK71pzDNvXDTvB34N8Y-1j-nWBsh4QLISncgU3fVw/exec
 */
 
 const GOOGLE_SHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzbKVMvJDfz4LZ1gMPv1w1n3FAtAvK71pzDNvXDTvB34N8Y-1j-nWBsh4QLISncgU3fVw/exec";
@@ -57,7 +58,6 @@ const divisionNames = [
 ];
 
 let divisionCount = 0;
-let hasLoadedFromSheet = false;
 
 function setStatus(text) {
   const el = document.getElementById("saveStatus");
@@ -331,93 +331,89 @@ function addMemberRow(button) {
 }
 
 /*
-  Saving the full HTML of dynamic areas is necessary because the site can add
-  divisions, aircrews, teams, ICC managers, radio operators, etc.
-*/
-function preserveInputValuesBeforeSave() {
-  document.querySelectorAll("input, textarea, select").forEach(el => {
-    if (el.tagName === "TEXTAREA") {
-      el.textContent = el.value || "";
-    } else if (el.tagName === "SELECT") {
-      Array.from(el.options).forEach(option => {
-        if (option.selected) {
-          option.setAttribute("selected", "selected");
-        } else {
-          option.removeAttribute("selected");
-        }
-      });
-    } else if (el.type === "checkbox" || el.type === "radio") {
-      if (el.checked) {
-        el.setAttribute("checked", "checked");
-      } else {
-        el.removeAttribute("checked");
-      }
-      el.setAttribute("value", el.value || "");
-    } else {
-      el.setAttribute("value", el.value || "");
-    }
-  });
-}
-
-function collectBoardState() {
-  preserveInputValuesBeforeSave();
-
-  return {
-    version: "ics-google-sheet-only-v1",
-    mainHtml: document.getElementById("mainChart").innerHTML,
-    airHtml: document.getElementById("airDetailArea").innerHTML,
-    groundHtml: document.getElementById("groundLayout").innerHTML,
-    divisionCount,
-    savedAt: new Date().toISOString()
-  };
-}
-
-function restoreBoardState(data) {
-  if (!data) return;
-
-  if (data.mainHtml) document.getElementById("mainChart").innerHTML = data.mainHtml;
-  if (data.airHtml) document.getElementById("airDetailArea").innerHTML = data.airHtml;
-  if (data.groundHtml) document.getElementById("groundLayout").innerHTML = data.groundHtml;
-  divisionCount = data.divisionCount || 0;
-
-  reconnectDynamicEvents();
-  assignStableFieldIds();
-}
-
-function reconnectDynamicEvents() {
-  document.querySelectorAll(".sync-ground-director").forEach(el => {
-    el.oninput = () => syncGroundDirector(el.value);
-  });
-  document.querySelectorAll(".sync-ground-phone").forEach(el => {
-    el.oninput = () => syncGroundPhone(el.value);
-  });
-  document.querySelectorAll(".sync-ground-email").forEach(el => {
-    el.oninput = () => syncGroundEmail(el.value);
-  });
-}
-
-/*
-  Stable IDs are only for debugging now. Full board state is what is saved.
+  Field IDs use Section + Label + instance number.
+  This avoids the old hidden file-input offset problem and still loads older
+  rows using a fallback match by Section + Label.
 */
 function assignStableFieldIds() {
-  document.querySelectorAll("input, textarea, select").forEach((el, index) => {
-    if (!el.dataset.fieldId) {
-      const box = el.closest("[data-box]");
-      const boxName = box ? box.dataset.box : "page";
-      const placeholder = el.getAttribute("placeholder") || "";
-      const cls = Array.from(el.classList).join(".");
-      el.dataset.fieldId = `${boxName}::${placeholder || cls || el.tagName}::${index}`;
+  const seen = {};
+
+  document.querySelectorAll("input, textarea, select").forEach((el) => {
+    const box = el.closest("[data-box]");
+    const section = box ? box.dataset.box : "page";
+    const label = el.getAttribute("placeholder") || el.getAttribute("aria-label") || el.name || el.id || el.tagName;
+    const base = `${section}::${label}`;
+
+    seen[base] = (seen[base] || 0) + 1;
+    el.dataset.section = section;
+    el.dataset.label = label;
+    el.dataset.fieldId = `${base}::${seen[base]}`;
+  });
+}
+
+function getFieldRecords() {
+  assignStableFieldIds();
+
+  return Array.from(document.querySelectorAll("input, textarea, select")).map((el, index) => {
+    return {
+      fieldId: el.dataset.fieldId,
+      sortOrder: index,
+      section: el.dataset.section || "",
+      label: el.dataset.label || "",
+      tagName: el.tagName,
+      type: el.type || "",
+      value: el.value || ""
+    };
+  });
+}
+
+function applyFieldRecords(records) {
+  assignStableFieldIds();
+
+  const byFieldId = {};
+  const bySectionLabel = {};
+
+  (records || []).forEach(record => {
+    if (!record) return;
+
+    if (record.fieldId) {
+      byFieldId[String(record.fieldId)] = record;
+    }
+
+    const key = `${record.section || ""}::${record.label || ""}`;
+    if (!bySectionLabel[key]) {
+      bySectionLabel[key] = [];
+    }
+    bySectionLabel[key].push(record);
+  });
+
+  const usedFallbackIndexes = {};
+
+  document.querySelectorAll("input, textarea, select").forEach(el => {
+    const exact = byFieldId[el.dataset.fieldId];
+
+    let record = exact;
+
+    if (!record) {
+      const key = `${el.dataset.section || ""}::${el.dataset.label || ""}`;
+      const list = bySectionLabel[key] || [];
+      usedFallbackIndexes[key] = usedFallbackIndexes[key] || 0;
+      record = list[usedFallbackIndexes[key]];
+      usedFallbackIndexes[key] += 1;
+    }
+
+    if (record) {
+      el.value = record.value == null ? "" : String(record.value);
+
+      if (el.classList.contains("sync-ground-director")) syncGroundDirector(el.value);
+      if (el.classList.contains("sync-ground-phone")) syncGroundPhone(el.value);
+      if (el.classList.contains("sync-ground-email")) syncGroundEmail(el.value);
     }
   });
 }
 
 function saveFieldsToSheet() {
-  if (!GOOGLE_SHEET_WEB_APP_URL || GOOGLE_SHEET_WEB_APP_URL.includes("PASTE_YOUR")) {
-    alert("Google Apps Script Web App URL is missing.");
-    return;
-  }
-
-  const payload = JSON.stringify(collectBoardState());
+  const records = getFieldRecords();
 
   const form = document.createElement("form");
   form.method = "POST";
@@ -426,9 +422,9 @@ function saveFieldsToSheet() {
   form.style.display = "none";
 
   const fields = {
-    action: "saveState",
+    action: "saveFields",
     token: GOOGLE_SHEET_SAVE_TOKEN,
-    payload
+    payload: JSON.stringify(records)
   };
 
   for (const [name, value] of Object.entries(fields)) {
@@ -456,33 +452,22 @@ function saveFieldsToSheet() {
 }
 
 function loadFieldsFromSheet(showAlert = false) {
-  if (!GOOGLE_SHEET_WEB_APP_URL || GOOGLE_SHEET_WEB_APP_URL.includes("PASTE_YOUR")) {
-    if (showAlert) alert("Google Apps Script Web App URL is missing.");
-    return;
-  }
-
-  const callbackName = "icsSheetLoadCallback_" + Date.now();
+  const callbackName = "icsFieldLoadCallback_" + Date.now();
 
   window[callbackName] = function(response) {
     try {
       if (!response || !response.ok) {
-        setStatus(response && response.error ? response.error : "No saved board found");
-        if (showAlert) alert(response && response.error ? response.error : "No saved board found.");
+        setStatus(response && response.error ? response.error : "Load failed");
+        if (showAlert) alert(response && response.error ? response.error : "Load failed");
         return;
       }
 
-      let payload = response.payload;
-      if (typeof payload === "string") {
-        payload = JSON.parse(payload);
-      }
-
-      restoreBoardState(payload);
-      hasLoadedFromSheet = true;
+      applyFieldRecords(response.records || []);
       setStatus("Loaded from Google Sheet");
     } catch (error) {
       console.error("Load/apply error:", error);
       setStatus("Load error");
-      if (showAlert) alert("Could not apply saved Google Sheet data. Check browser console.");
+      if (showAlert) alert("Could not apply Google Sheet data. See browser console.");
     } finally {
       delete window[callbackName];
       const script = document.getElementById(callbackName);
@@ -491,7 +476,7 @@ function loadFieldsFromSheet(showAlert = false) {
   };
 
   const url = new URL(GOOGLE_SHEET_WEB_APP_URL);
-  url.searchParams.set("action", "loadState");
+  url.searchParams.set("action", "loadFields");
   url.searchParams.set("token", GOOGLE_SHEET_SAVE_TOKEN);
   url.searchParams.set("callback", callbackName);
 
@@ -503,10 +488,9 @@ function loadFieldsFromSheet(showAlert = false) {
 
 window.addEventListener("DOMContentLoaded", () => {
   initStaticChildren();
-  reconnectDynamicEvents();
   assignStableFieldIds();
 
-  // Auto-load the live board from Google Sheet for every visitor.
+  // Auto-load live field data from Google Sheets for every visitor.
   setTimeout(() => loadFieldsFromSheet(false), 500);
 });
 </script>
