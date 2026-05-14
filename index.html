@@ -12,17 +12,11 @@
 <header>
   <h1>Incident Command System Chain of Command</h1>
   <div class="toolbar">
-      <button class="primary" onclick="cloudSaveFields()">Save Fields to Google Sheet</button>
-      <button onclick="cloudLoadFields()">Load Fields from Google Sheet</button>
-      <button onclick="manualSave()">Save in Browser</button>
-      <button onclick="restoreFromLocalStorage()">Reload Browser Save</button>
-      <button onclick="clearBrowserSave()">Clear Browser Save</button>
-      <button onclick="saveJson()">Export JSON Backup</button>
-      <button onclick="document.getElementById('loadFile').click()">Import JSON Backup</button>
-      <button onclick="window.print()">Print</button>
-      <span class="save-status" id="saveStatus">Autosave ready</span>
-      <input type="file" id="loadFile" accept="application/json,.json" style="display:none" onchange="loadJson(event)" />
-    </div>
+    <button class="primary" onclick="saveFieldsToSheet()">Save to Google Sheet</button>
+    <button onclick="loadFieldsFromSheet(false)">Load from Google Sheet</button>
+    <button onclick="window.print()">Print</button>
+    <span id="saveStatus" style="font-size:11px;color:#555;min-width:160px;">Starting...</span>
+  </div>
 </header>
 <main>
 <section class="chart" id="mainChart">
@@ -40,147 +34,344 @@
 <dialog id="groundDialog"><div class="dialog-header"><h2>Ground Operations Branch - Additional Positions</h2><button onclick="closeDialog('groundDialog')">Close</button></div><div class="dialog-body"><div class="box" style="max-width:260px;margin-bottom:10px" data-box="Ground Operations Branch Director Detail"><div class="position-title">Ground Operations Branch Director</div><input class="field person sync-ground-director" placeholder="Name" oninput="syncGroundDirector(this.value)"/><input class="field phone sync-ground-phone" placeholder="Phone" oninput="syncGroundPhone(this.value)"/><input class="field email sync-ground-email" placeholder="Email" oninput="syncGroundEmail(this.value)"/></div><div class="button-row"><button class="primary" onclick="addDivisionColumn()">Add Division Column</button></div><div class="ground-layout" id="groundLayout"><div class="resource-column" id="unassignedResources"><h3>Unassigned Resources</h3><button onclick="addGroundTeam('unassignedResources','Single Resource / Ground Team')">Add Single Resource / Ground Team</button><button onclick="addPlaceholderResource('unassignedResources','Strike Team')">Add Strike Team</button><button onclick="addPlaceholderResource('unassignedResources','Task Force')">Add Task Force</button></div></div></div></dialog>
 <template id="simpleBoxTemplate"><div class="box nested compact dynamic-box"><div class="position-title"></div><input class="field person" placeholder="Name"/><input class="field phone" placeholder="Phone"/><input class="field email" placeholder="Email"/></div></template>
 <template id="teamTemplate"><div class="team-card dynamic-box"><h4></h4><div class="member-table"><div class="member-row"><label>Leader</label><input class="field" placeholder="GTL Name"/></div><div class="member-row"><label>Member 1</label><input class="field" placeholder="GTM Name"/></div><div class="member-row"><label>Member 2</label><input class="field" placeholder="GTM Name"/></div></div><button onclick="addMemberRow(this)">Add Member Row</button></div></template>
-<script>
-const divisionNames=['Division Alpha','Division Bravo','Division Charlie','Division Delta','Division Echo','Division Foxtrot','Division Golf','Division Hotel','Division India','Division Juliet','Division Kilo','Division Lima'];let divisionCount=0;
-function escapeHtml(v){return String(v).replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replaceAll("'",'&#039;')}
-function simpleBox(title){const t=document.getElementById('simpleBoxTemplate');const b=t.content.firstElementChild.cloneNode(true);b.dataset.box=title;b.querySelector('.position-title').textContent=title;return b}
-function initStaticChildren(){['Resource Unit Leader','Situation Unit Leader','Documentation Unit Leader','Demob Unit Leader'].forEach(t=>document.getElementById('planningChildren').appendChild(simpleBox(t)));['Time Unit Leader','Procurement Unit Leader','Comp / Claims Unit Leader','Cost Unit Leader'].forEach(t=>document.getElementById('financeChildren').appendChild(simpleBox(t)));const log=document.getElementById('logisticsChildren');const support=simpleBox('Support Branch Director');const service=simpleBox('Service Branch Director');const sc=document.createElement('div');sc.className='children one';['Supply Unit Leader','Facilities Unit Leader','Ground Support Unit Leader'].forEach(t=>sc.appendChild(simpleBox(t)));support.appendChild(sc);const vc=document.createElement('div');vc.className='children one';const comm=simpleBox('Communications Unit Leader');const btn=document.createElement('button');btn.className='branch-button';btn.textContent='Add ICC Manager';btn.onclick=()=>addICC(btn);comm.appendChild(btn);const cc=document.createElement('div');cc.className='children one';comm.appendChild(cc);vc.appendChild(comm);['Medical Unit Leader','Food Unit Leader'].forEach(t=>vc.appendChild(simpleBox(t)));service.appendChild(vc);log.appendChild(support);log.appendChild(service)}
-function openDialog(id){document.getElementById(id).showModal()}function closeDialog(id){document.getElementById(id).close()}function openGroundDialog(){syncGroundFromMain();openDialog('groundDialog')}
-function syncGroundDirector(v){document.querySelectorAll('.sync-ground-director').forEach(e=>{if(e.value!==v)e.value=v})}function syncGroundPhone(v){document.querySelectorAll('.sync-ground-phone').forEach(e=>{if(e.value!==v)e.value=v})}function syncGroundEmail(v){document.querySelectorAll('.sync-ground-email').forEach(e=>{if(e.value!==v)e.value=v})}function syncGroundFromMain(){syncGroundDirector(document.querySelector('.sync-ground-director')?.value||'');syncGroundPhone(document.querySelector('.sync-ground-phone')?.value||'');syncGroundEmail(document.querySelector('.sync-ground-email')?.value||'')}
-function addSimpleBox(id,title){document.getElementById(id).appendChild(simpleBox(title))}function addICC(button){const parent=button.closest('.box');const children=parent.querySelector('.children')||document.createElement('div');children.className='children one';if(!parent.contains(children))parent.appendChild(children);const icc=simpleBox('Incident Communications Center Manager');const add=document.createElement('button');add.className='branch-button';add.textContent='Add Radio Operator';add.onclick=()=>{let nested=icc.querySelector('.children');if(!nested){nested=document.createElement('div');nested.className='children one';icc.appendChild(nested)}nested.appendChild(simpleBox('Radio Operator'))};icc.appendChild(add);children.appendChild(icc)}
-function addAircrew(){const area=document.getElementById('airDetailArea');const c=document.createElement('div');c.className='aircrew dynamic-box';c.dataset.box='Aircrew';c.innerHTML='<h3>Aircrew</h3>'+['Pilot<br>MP / TMP','Right Seat<br>MO','Back Left<br>MS / MO / AP','Back Right<br>MS / MO / AP'].map(t=>`<div class="box compact"><div class="position-title">${t}</div><input class="field person" placeholder="Name"/><input class="field phone" placeholder="Phone"/><input class="field email" placeholder="Email"/></div>`).join('');area.appendChild(c)}
-function addDivisionColumn(){const layout=document.getElementById('groundLayout');const name=divisionNames[divisionCount]||`Division ${divisionCount+1}`;divisionCount++;const col=document.createElement('div');col.className='resource-column dynamic-box division-column';col.dataset.box=name;col.innerHTML=`<h3>Division</h3><input class="field division-name" value="${escapeHtml(name)}"/><div class="box compact"><div class="position-title">Division Supervisor</div><input class="field person" placeholder="Name"/><input class="field phone" placeholder="Phone"/><input class="field email" placeholder="Email"/></div><button onclick="addGroundTeamToColumn(this,'Ground Team')">Add Ground Team</button><button onclick="addPlaceholderToColumn(this,'Strike Team')">Add Strike Team</button><button onclick="addPlaceholderToColumn(this,'Task Force')">Add Task Force</button>`;layout.appendChild(col)}
-function addGroundTeamToColumn(button,title){addGroundTeam(null,title,button.closest('.resource-column'))}function addPlaceholderToColumn(button,title){addPlaceholderResource(null,title,button.closest('.resource-column'))}
-function addGroundTeam(id,title,override=null){const container=override||document.getElementById(id);const t=document.getElementById('teamTemplate');const team=t.content.firstElementChild.cloneNode(true);team.dataset.box=title;team.querySelector('h4').textContent=title;container.appendChild(team)}function addPlaceholderResource(id,title,override=null){const c=override||document.getElementById(id);const d=document.createElement('div');d.className='team-card dynamic-box';d.dataset.box=title;d.innerHTML=`<h4>${escapeHtml(title)}</h4><textarea class="field" placeholder="Notes / Assignment"></textarea>`;c.appendChild(d)}function addMemberRow(button){const table=button.closest('.team-card').querySelector('.member-table');const count=table.querySelectorAll('.member-row').length;const row=document.createElement('div');row.className='member-row';row.innerHTML=`<label>Member ${count}</label><input class="field" placeholder="GTM Name"/>`;table.appendChild(row)}
-function collectData(){return{version:'ics-html-v1',missionNumber:document.getElementById('missionNumber').value,mainHtml:document.getElementById('mainChart').innerHTML,airHtml:document.getElementById('airDetailArea').innerHTML,groundHtml:document.getElementById('groundLayout').innerHTML,divisionCount}}
-function restoreData(data){if(!data)return;document.getElementById('missionNumber').value=data.missionNumber||'';if(data.mainHtml)document.getElementById('mainChart').innerHTML=data.mainHtml;if(data.airHtml)document.getElementById('airDetailArea').innerHTML=data.airHtml;if(data.groundHtml)document.getElementById('groundLayout').innerHTML=data.groundHtml;divisionCount=data.divisionCount||0;document.querySelectorAll('.sync-ground-director').forEach(el=>el.oninput=()=>syncGroundDirector(el.value));document.querySelectorAll('.sync-ground-phone').forEach(el=>el.oninput=()=>syncGroundPhone(el.value));document.querySelectorAll('.sync-ground-email').forEach(el=>el.oninput=()=>syncGroundEmail(el.value))}
-function saveJson(){const data=collectData();const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=`ics_assignments_${data.missionNumber||'mission'}.json`;a.click();URL.revokeObjectURL(url)}function loadJson(event){const file=event.target.files[0];if(!file)return;const reader=new FileReader();reader.onload=e=>{try{restoreData(JSON.parse(e.target.result))}catch{alert('Could not load JSON file.')}};reader.readAsText(file);event.target.value=''}
-initStaticChildren();
-</script>
-
-<script>
-(function(){
-  const STORAGE_KEY = "ics_chain_of_command_autosave_v1";
-  let saveTimer = null;
-  let restoring = false;
-
-  function status(text){
-    const el = document.getElementById("saveStatus");
-    if (el) el.textContent = text;
-  }
-
-  function browserSave(){
-    if (typeof collectData !== "function") return;
-    const data = collectData();
-    data.savedAt = new Date().toISOString();
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    status("Saved in browser");
-  }
-
-  function scheduleSave(){
-    if (restoring) return;
-    clearTimeout(saveTimer);
-    saveTimer = setTimeout(browserSave, 300);
-  }
-
-  function reconnectAutosave(){
-    document.querySelectorAll("input, textarea, select").forEach(el => {
-      el.removeEventListener("input", scheduleSave);
-      el.removeEventListener("change", scheduleSave);
-      el.addEventListener("input", scheduleSave);
-      el.addEventListener("change", scheduleSave);
-    });
-  }
-
-  window.saveBrowser = function(){
-    browserSave();
-    alert("Saved in this browser/device.");
-  };
-
-  window.restoreBrowser = function(){
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      status("No browser save found");
-      return;
-    }
-    try {
-      restoring = true;
-      restoreData(JSON.parse(raw));
-      reconnectAutosave();
-      restoring = false;
-      status("Browser save loaded");
-    } catch (error) {
-      restoring = false;
-      alert("Could not load browser save.");
-    }
-  };
-
-  window.clearBrowserSave = function(){
-    if (!confirm("Clear saved data from this browser/device?")) return;
-    localStorage.removeItem(STORAGE_KEY);
-    status("Browser save cleared");
-  };
-
-  // Wrap existing dynamic-add functions so new fields also autosave.
-  const wrapNames = [
-    "addSimpleBox",
-    "addICC",
-    "addAircrew",
-    "addDivisionColumn",
-    "addGroundTeam",
-    "addPlaceholderResource",
-    "addMemberRow",
-    "restoreData",
-    "loadJson"
-  ];
-
-  window.addEventListener("DOMContentLoaded", () => {
-    for (const name of wrapNames) {
-      if (typeof window[name] === "function") {
-        const original = window[name];
-        window[name] = function(...args){
-          const result = original.apply(this, args);
-          reconnectAutosave();
-          scheduleSave();
-          return result;
-        };
-      }
-    }
-
-    reconnectAutosave();
-
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      try {
-        restoring = true;
-        restoreData(JSON.parse(raw));
-        reconnectAutosave();
-        restoring = false;
-        status("Browser save loaded");
-      } catch (error) {
-        restoring = false;
-        status("Browser save failed");
-      }
-    }
-  });
-
-  window.addEventListener("beforeunload", browserSave);
-})();
-</script>
-
 
 <script>
 /*
-  Google Sheet live field storage settings.
+  ICS Chain of Command - Google Sheet Only Version
 
-  Setup:
-  1. Deploy google_apps_script_field_backend.gs as a Web App.
-  2. Paste the Web App URL below.
-  3. Use the same token here and in CONFIG.SAVE_TOKEN in the Apps Script file.
+  Backend:
+    google_apps_script_sheet_only_backend.gs
+
+  This page does NOT use localStorage and does NOT use JSON backup files.
+  It loads field values from Google Sheets on page open and saves field values
+  back to Google Sheets when you click Save.
 */
-const GOOGLE_SHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyGyipz64WsXsee7EG7jYldjBONuRlNKrcbwdGd8X9c/exec";
+
+const GOOGLE_SHEET_WEB_APP_URL = "https://script.google.com/macros/s/AKfycbzzKpf9Ny5J9ViBHcfhZ7waR5Zz9iQZO3B4CfYWK5hA4NETLbOAfPRzSnvWAuKw-EEnVg/exec";
 const GOOGLE_SHEET_SAVE_TOKEN = "testing";
 
+const divisionNames = [
+  "Division Alpha", "Division Bravo", "Division Charlie", "Division Delta",
+  "Division Echo", "Division Foxtrot", "Division Golf", "Division Hotel",
+  "Division India", "Division Juliet", "Division Kilo", "Division Lima"
+];
+
+let divisionCount = 0;
+let hasLoadedFromSheet = false;
+
+function setStatus(text) {
+  const el = document.getElementById("saveStatus");
+  if (el) el.textContent = text;
+}
+
+function escapeHtml(value) {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function openDialog(id) {
+  document.getElementById(id).showModal();
+}
+
+function closeDialog(id) {
+  document.getElementById(id).close();
+}
+
+function openGroundDialog() {
+  syncGroundFromMain();
+  openDialog("groundDialog");
+}
+
+function syncGroundDirector(value) {
+  document.querySelectorAll(".sync-ground-director").forEach(el => {
+    if (el.value !== value) el.value = value;
+  });
+}
+
+function syncGroundPhone(value) {
+  document.querySelectorAll(".sync-ground-phone").forEach(el => {
+    if (el.value !== value) el.value = value;
+  });
+}
+
+function syncGroundEmail(value) {
+  document.querySelectorAll(".sync-ground-email").forEach(el => {
+    if (el.value !== value) el.value = value;
+  });
+}
+
+function syncGroundFromMain() {
+  const name = document.querySelector(".sync-ground-director")?.value || "";
+  const phone = document.querySelector(".sync-ground-phone")?.value || "";
+  const email = document.querySelector(".sync-ground-email")?.value || "";
+  syncGroundDirector(name);
+  syncGroundPhone(phone);
+  syncGroundEmail(email);
+}
+
+function createSimpleBox(title) {
+  const template = document.getElementById("simpleBoxTemplate");
+  const box = template.content.firstElementChild.cloneNode(true);
+  box.dataset.box = title;
+  box.querySelector(".position-title").textContent = title;
+  return box;
+}
+
+function addSimpleBox(containerId, title) {
+  document.getElementById(containerId).appendChild(createSimpleBox(title));
+  assignStableFieldIds();
+}
+
+function addStaticSimpleBox(container, title) {
+  container.appendChild(createSimpleBox(title));
+}
+
+function initStaticChildren() {
+  const planning = document.getElementById("planningChildren");
+  if (planning && planning.children.length === 0) {
+    addStaticSimpleBox(planning, "Resource Unit Leader");
+
+    const situation = createSimpleBox("Situation Unit Leader");
+    const nested = document.createElement("div");
+    nested.className = "children one";
+    nested.appendChild(createSimpleBox("GIS Position"));
+    nested.appendChild(createSimpleBox("Incident Meteorologist"));
+    situation.appendChild(nested);
+    planning.appendChild(situation);
+
+    addStaticSimpleBox(planning, "Documentation Unit Leader");
+    addStaticSimpleBox(planning, "Demob Unit Leader");
+  }
+
+  const logistics = document.getElementById("logisticsChildren");
+  if (logistics && logistics.children.length === 0) {
+    const support = createSimpleBox("Support Branch Director");
+    const supportNested = document.createElement("div");
+    supportNested.className = "children one";
+    supportNested.appendChild(createSimpleBox("Supply Unit Leader"));
+    supportNested.appendChild(createSimpleBox("Facilities Unit Leader"));
+    supportNested.appendChild(createSimpleBox("Ground Support Unit Leader"));
+    support.appendChild(supportNested);
+
+    const service = createSimpleBox("Service Branch Director");
+    const serviceNested = document.createElement("div");
+    serviceNested.className = "children one";
+
+    const comms = createSimpleBox("Communications Unit Leader");
+    const addRadioBtn = document.createElement("button");
+    addRadioBtn.className = "branch-button";
+    addRadioBtn.textContent = "Add ICC Manager";
+    addRadioBtn.onclick = () => addICC(addRadioBtn);
+    comms.appendChild(addRadioBtn);
+
+    const commsChildren = document.createElement("div");
+    commsChildren.className = "children one";
+    comms.appendChild(commsChildren);
+
+    serviceNested.appendChild(comms);
+    serviceNested.appendChild(createSimpleBox("Medical Unit Leader"));
+    serviceNested.appendChild(createSimpleBox("Food Unit Leader"));
+    service.appendChild(serviceNested);
+
+    logistics.appendChild(support);
+    logistics.appendChild(service);
+  }
+
+  const finance = document.getElementById("financeChildren");
+  if (finance && finance.children.length === 0) {
+    addStaticSimpleBox(finance, "Time Unit Leader");
+    addStaticSimpleBox(finance, "Procurement Unit Leader");
+    addStaticSimpleBox(finance, "Comp / Claims Unit Leader");
+    addStaticSimpleBox(finance, "Cost Unit Leader");
+  }
+}
+
+function addICC(button) {
+  const parentBox = button.closest(".box");
+  const children = parentBox.querySelector(".children");
+  const icc = createSimpleBox("Incident Communications Center Manager");
+
+  const addRadio = document.createElement("button");
+  addRadio.className = "branch-button";
+  addRadio.textContent = "Add Radio Operator";
+  addRadio.onclick = () => {
+    let nested = icc.querySelector(".children");
+    if (!nested) {
+      nested = document.createElement("div");
+      nested.className = "children one";
+      icc.appendChild(nested);
+    }
+    nested.appendChild(createSimpleBox("Radio Operator"));
+    assignStableFieldIds();
+  };
+
+  icc.appendChild(addRadio);
+
+  const nested = document.createElement("div");
+  nested.className = "children one";
+  icc.appendChild(nested);
+
+  children.appendChild(icc);
+  assignStableFieldIds();
+}
+
+function addAircrew() {
+  const area = document.getElementById("airDetailArea");
+  const crew = document.createElement("div");
+  crew.className = "aircrew dynamic-box";
+  crew.dataset.box = "Aircrew";
+
+  crew.innerHTML = `
+    <h3>Aircrew</h3>
+    <div class="box compact" data-box="Pilot">
+      <div class="position-title">Pilot<br>MP / TMP</div>
+      <input class="field person" placeholder="Name" />
+      <input class="field phone" placeholder="Phone" />
+      <input class="field email" placeholder="Email" />
+    </div>
+    <div class="box compact" data-box="Right Seat MO">
+      <div class="position-title">Right Seat<br>MO</div>
+      <input class="field person" placeholder="Name" />
+      <input class="field phone" placeholder="Phone" />
+      <input class="field email" placeholder="Email" />
+    </div>
+    <div class="box compact" data-box="Back Left MS/MO/AP">
+      <div class="position-title">Back Left<br>MS / MO / AP</div>
+      <input class="field person" placeholder="Name" />
+      <input class="field phone" placeholder="Phone" />
+      <input class="field email" placeholder="Email" />
+    </div>
+    <div class="box compact" data-box="Back Right MS/MO/AP">
+      <div class="position-title">Back Right<br>MS / MO / AP</div>
+      <input class="field person" placeholder="Name" />
+      <input class="field phone" placeholder="Phone" />
+      <input class="field email" placeholder="Email" />
+    </div>
+  `;
+
+  area.appendChild(crew);
+  assignStableFieldIds();
+}
+
+function addDivisionColumn() {
+  const layout = document.getElementById("groundLayout");
+  const name = divisionNames[divisionCount] || `Division ${divisionCount + 1}`;
+  divisionCount += 1;
+
+  const column = document.createElement("div");
+  column.className = "resource-column dynamic-box division-column";
+  column.dataset.box = name;
+
+  column.innerHTML = `
+    <h3>Division</h3>
+    <input class="field division-name" value="${escapeHtml(name)}" />
+    <div class="box compact" data-box="Division Supervisor">
+      <div class="position-title">Division Supervisor</div>
+      <input class="field person" placeholder="Name" />
+      <input class="field phone" placeholder="Phone" />
+      <input class="field email" placeholder="Email" />
+    </div>
+    <button onclick="addGroundTeamToColumn(this, 'Ground Team')">Add Ground Team</button>
+    <button onclick="addPlaceholderToColumn(this, 'Strike Team')">Add Strike Team</button>
+    <button onclick="addPlaceholderToColumn(this, 'Task Force')">Add Task Force</button>
+  `;
+
+  layout.appendChild(column);
+  assignStableFieldIds();
+}
+
+function addGroundTeamToColumn(button, title) {
+  const column = button.closest(".resource-column");
+  addGroundTeam(column.id || null, title, column);
+}
+
+function addPlaceholderToColumn(button, title) {
+  const column = button.closest(".resource-column");
+  addPlaceholderResource(column.id || null, title, column);
+}
+
+function addGroundTeam(containerId, title, containerOverride = null) {
+  const container = containerOverride || document.getElementById(containerId);
+  const template = document.getElementById("teamTemplate");
+  const team = template.content.firstElementChild.cloneNode(true);
+  team.dataset.box = title;
+  team.querySelector("h4").textContent = title;
+  container.appendChild(team);
+  assignStableFieldIds();
+}
+
+function addPlaceholderResource(containerId, title, containerOverride = null) {
+  const container = containerOverride || document.getElementById(containerId);
+  const div = document.createElement("div");
+  div.className = "team-card dynamic-box";
+  div.dataset.box = title;
+  div.innerHTML = `
+    <h4>${escapeHtml(title)}</h4>
+    <textarea class="field" placeholder="Notes / Assignment"></textarea>
+  `;
+  container.appendChild(div);
+  assignStableFieldIds();
+}
+
+function addMemberRow(button) {
+  const table = button.closest(".team-card").querySelector(".member-table");
+  const count = table.querySelectorAll(".member-row").length;
+  const row = document.createElement("div");
+  row.className = "member-row";
+  row.innerHTML = `
+    <label>Member ${count}</label>
+    <input class="field" placeholder="GTM Name" />
+  `;
+  table.appendChild(row);
+  assignStableFieldIds();
+}
+
+/*
+  Saving the full HTML of dynamic areas is necessary because the site can add
+  divisions, aircrews, teams, ICC managers, radio operators, etc.
+*/
+function collectBoardState() {
+  return {
+    version: "ics-google-sheet-only-v1",
+    mainHtml: document.getElementById("mainChart").innerHTML,
+    airHtml: document.getElementById("airDetailArea").innerHTML,
+    groundHtml: document.getElementById("groundLayout").innerHTML,
+    divisionCount,
+    savedAt: new Date().toISOString()
+  };
+}
+
+function restoreBoardState(data) {
+  if (!data) return;
+
+  if (data.mainHtml) document.getElementById("mainChart").innerHTML = data.mainHtml;
+  if (data.airHtml) document.getElementById("airDetailArea").innerHTML = data.airHtml;
+  if (data.groundHtml) document.getElementById("groundLayout").innerHTML = data.groundHtml;
+  divisionCount = data.divisionCount || 0;
+
+  reconnectDynamicEvents();
+  assignStableFieldIds();
+}
+
+function reconnectDynamicEvents() {
+  document.querySelectorAll(".sync-ground-director").forEach(el => {
+    el.oninput = () => syncGroundDirector(el.value);
+  });
+  document.querySelectorAll(".sync-ground-phone").forEach(el => {
+    el.oninput = () => syncGroundPhone(el.value);
+  });
+  document.querySelectorAll(".sync-ground-email").forEach(el => {
+    el.oninput = () => syncGroundEmail(el.value);
+  });
+}
+
+/*
+  Stable IDs are only for debugging now. Full board state is what is saved.
+*/
 function assignStableFieldIds() {
   document.querySelectorAll("input, textarea, select").forEach((el, index) => {
     if (!el.dataset.fieldId) {
@@ -193,57 +384,13 @@ function assignStableFieldIds() {
   });
 }
 
-function getFieldRecords() {
-  assignStableFieldIds();
-
-  return Array.from(document.querySelectorAll("input, textarea, select")).map((el, index) => {
-    const box = el.closest("[data-box]");
-    const title = box ? box.dataset.box : "";
-    const label = el.getAttribute("placeholder") || el.getAttribute("aria-label") || el.name || el.id || el.tagName;
-
-    return {
-      fieldId: el.dataset.fieldId,
-      sortOrder: index,
-      section: title,
-      label: label,
-      tagName: el.tagName,
-      type: el.type || "",
-      value: el.value || ""
-    };
-  });
-}
-
-function applyFieldRecords(records) {
-  assignStableFieldIds();
-
-  const byId = {};
-  (records || []).forEach(record => {
-    if (record && record.fieldId) {
-      byId[String(record.fieldId)] = record;
-    }
-  });
-
-  document.querySelectorAll("input, textarea, select").forEach(el => {
-    try {
-      const record = byId[el.dataset.fieldId];
-      if (record) {
-        el.value = record.value == null ? "" : String(record.value);
-        el.dispatchEvent(new Event("input", { bubbles: true }));
-        el.dispatchEvent(new Event("change", { bubbles: true }));
-      }
-    } catch (err) {
-      console.warn("Could not apply field", el.dataset.fieldId, err);
-    }
-  });
-}
-
-function cloudSaveFields() {
+function saveFieldsToSheet() {
   if (!GOOGLE_SHEET_WEB_APP_URL || GOOGLE_SHEET_WEB_APP_URL.includes("PASTE_YOUR")) {
-    alert("Paste your Google Apps Script Web App URL into GOOGLE_SHEET_WEB_APP_URL first.");
+    alert("Google Apps Script Web App URL is missing.");
     return;
   }
 
-  const records = getFieldRecords();
+  const payload = JSON.stringify(collectBoardState());
 
   const form = document.createElement("form");
   form.method = "POST";
@@ -252,9 +399,9 @@ function cloudSaveFields() {
   form.style.display = "none";
 
   const fields = {
-    action: "saveFields",
+    action: "saveState",
     token: GOOGLE_SHEET_SAVE_TOKEN,
-    payload: JSON.stringify(records)
+    payload
   };
 
   for (const [name, value] of Object.entries(fields)) {
@@ -278,37 +425,37 @@ function cloudSaveFields() {
   form.submit();
   form.remove();
 
-  const status = document.getElementById("saveStatus");
-  if (status) status.textContent = "Saved fields to Google Sheet";
+  setStatus("Saved to Google Sheet");
 }
 
-function cloudLoadFields() {
+function loadFieldsFromSheet(showAlert = false) {
   if (!GOOGLE_SHEET_WEB_APP_URL || GOOGLE_SHEET_WEB_APP_URL.includes("PASTE_YOUR")) {
-    alert("Paste your Google Apps Script Web App URL into GOOGLE_SHEET_WEB_APP_URL first.");
+    if (showAlert) alert("Google Apps Script Web App URL is missing.");
     return;
   }
 
-  const callbackName = "icsFieldLoadCallback_" + Date.now();
+  const callbackName = "icsSheetLoadCallback_" + Date.now();
 
   window[callbackName] = function(response) {
     try {
       if (!response || !response.ok) {
-        alert(response && response.error ? response.error : "Could not load fields.");
+        setStatus(response && response.error ? response.error : "No saved board found");
+        if (showAlert) alert(response && response.error ? response.error : "No saved board found.");
         return;
       }
 
-      applyFieldRecords(response.records || []);
-
-      if (typeof saveToLocalStorage === "function") {
-        saveToLocalStorage();
-      } else if (typeof saveToLocalStorageSafe === "function") {
-        saveToLocalStorageSafe();
+      let payload = response.payload;
+      if (typeof payload === "string") {
+        payload = JSON.parse(payload);
       }
 
-      const status = document.getElementById("saveStatus");
-      if (status) status.textContent = "Loaded fields from Google Sheet";
+      restoreBoardState(payload);
+      hasLoadedFromSheet = true;
+      setStatus("Loaded from Google Sheet");
     } catch (error) {
-      alert("Could not apply saved field data.");
+      console.error("Load/apply error:", error);
+      setStatus("Load error");
+      if (showAlert) alert("Could not apply saved Google Sheet data. Check browser console.");
     } finally {
       delete window[callbackName];
       const script = document.getElementById(callbackName);
@@ -317,7 +464,7 @@ function cloudLoadFields() {
   };
 
   const url = new URL(GOOGLE_SHEET_WEB_APP_URL);
-  url.searchParams.set("action", "loadFields");
+  url.searchParams.set("action", "loadState");
   url.searchParams.set("token", GOOGLE_SHEET_SAVE_TOKEN);
   url.searchParams.set("callback", callbackName);
 
@@ -327,43 +474,14 @@ function cloudLoadFields() {
   document.body.appendChild(script);
 }
 
-// Give dynamic fields stable IDs as soon as they are created.
-const originalAddSimpleBox = window.addSimpleBox;
-if (typeof originalAddSimpleBox === "function") {
-  window.addSimpleBox = function(...args) {
-    const result = originalAddSimpleBox.apply(this, args);
-    assignStableFieldIds();
-    return result;
-  };
-}
+window.addEventListener("DOMContentLoaded", () => {
+  initStaticChildren();
+  reconnectDynamicEvents();
+  assignStableFieldIds();
 
-window.addEventListener("DOMContentLoaded", assignStableFieldIds);
-
-
-function saveToLocalStorageSafe() {
-  try {
-    if (typeof collectData === "function") {
-      localStorage.setItem("ics_chain_of_command_autosave_v1", JSON.stringify(collectData()));
-    }
-  } catch (err) {
-    console.warn("Browser local save skipped", err);
-  }
-}
-
-function autoLoadCloudFieldsOnStartup() {
-  if (!GOOGLE_SHEET_WEB_APP_URL || GOOGLE_SHEET_WEB_APP_URL.includes("PASTE_YOUR")) {
-    return;
-  }
-
-  // Wait briefly so the page has finished creating its default fields.
-  setTimeout(() => {
-    cloudLoadFields();
-  }, 750);
-}
-
-window.addEventListener("DOMContentLoaded", autoLoadCloudFieldsOnStartup);
-
+  // Auto-load the live board from Google Sheet for every visitor.
+  setTimeout(() => loadFieldsFromSheet(false), 500);
+});
 </script>
-
 </body>
 </html>
