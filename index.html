@@ -336,18 +336,29 @@ function addMemberRow(button) {
   rows using a fallback match by Section + Label.
 */
 function assignStableFieldIds() {
-  const seen = {};
+  /*
+    IMPORTANT:
+    The Google Sheet is set up as:
+      FieldId | Section | Label | Value | SortOrder | LastUpdated
 
-  document.querySelectorAll("input, textarea, select").forEach((el) => {
+    FieldId must use the global visible field order, not a per-label counter.
+    Example:
+      Incident Commander::Name::1
+      Incident Commander::Phone::2
+      Incident Commander::Email::3
+
+    This matches your current ICS_Fields sheet and prevents "Loaded" with blank fields.
+  */
+  Array.from(document.querySelectorAll("input, textarea, select")).forEach((el, index) => {
     const box = el.closest("[data-box]");
     const section = box ? box.dataset.box : "page";
     const label = el.getAttribute("placeholder") || el.getAttribute("aria-label") || el.name || el.id || el.tagName;
-    const base = `${section}::${label}`;
+    const globalNumber = index + 1;
 
-    seen[base] = (seen[base] || 0) + 1;
     el.dataset.section = section;
     el.dataset.label = label;
-    el.dataset.fieldId = `${base}::${seen[base]}`;
+    el.dataset.fieldId = `${section}::${label}::${globalNumber}`;
+    el.dataset.sortOrder = String(globalNumber);
   });
 }
 
@@ -357,7 +368,7 @@ function getFieldRecords() {
   return Array.from(document.querySelectorAll("input, textarea, select")).map((el, index) => {
     return {
       fieldId: el.dataset.fieldId,
-      sortOrder: index,
+      sortOrder: Number(el.dataset.sortOrder || index + 1),
       section: el.dataset.section || "",
       label: el.dataset.label || "",
       tagName: el.tagName,
@@ -370,46 +381,55 @@ function getFieldRecords() {
 function applyFieldRecords(records) {
   assignStableFieldIds();
 
-  const byFieldId = {};
-  const bySectionLabel = {};
+  const cleanRecords = (records || [])
+    .filter(record => record && (record.fieldId || record.section || record.label))
+    .map(record => ({
+      fieldId: record.fieldId == null ? "" : String(record.fieldId),
+      section: record.section == null ? "" : String(record.section),
+      label: record.label == null ? "" : String(record.label),
+      value: record.value == null ? "" : String(record.value),
+      sortOrder: Number(record.sortOrder || 0)
+    }))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
 
-  (records || []).forEach(record => {
-    if (!record) return;
+  const byFieldId = new Map();
+  const bySectionLabel = new Map();
 
-    if (record.fieldId) {
-      byFieldId[String(record.fieldId)] = record;
-    }
+  cleanRecords.forEach(record => {
+    if (record.fieldId) byFieldId.set(record.fieldId, record);
 
-    const key = `${record.section || ""}::${record.label || ""}`;
-    if (!bySectionLabel[key]) {
-      bySectionLabel[key] = [];
-    }
-    bySectionLabel[key].push(record);
+    const key = `${record.section}::${record.label}`;
+    if (!bySectionLabel.has(key)) bySectionLabel.set(key, []);
+    bySectionLabel.get(key).push(record);
   });
 
-  const usedFallbackIndexes = {};
+  const usedFallbackIndexes = new Map();
+  let appliedCount = 0;
 
-  document.querySelectorAll("input, textarea, select").forEach(el => {
-    const exact = byFieldId[el.dataset.fieldId];
+  Array.from(document.querySelectorAll("input, textarea, select")).forEach(el => {
+    let record = byFieldId.get(el.dataset.fieldId);
 
-    let record = exact;
-
+    // Fallback: match your sheet's Section + Label columns in sorted order.
+    // This keeps loading working even if a field number shifts later.
     if (!record) {
       const key = `${el.dataset.section || ""}::${el.dataset.label || ""}`;
-      const list = bySectionLabel[key] || [];
-      usedFallbackIndexes[key] = usedFallbackIndexes[key] || 0;
-      record = list[usedFallbackIndexes[key]];
-      usedFallbackIndexes[key] += 1;
+      const list = bySectionLabel.get(key) || [];
+      const used = usedFallbackIndexes.get(key) || 0;
+      record = list[used];
+      usedFallbackIndexes.set(key, used + 1);
     }
 
     if (record) {
-      el.value = record.value == null ? "" : String(record.value);
+      el.value = record.value;
+      appliedCount += 1;
 
       if (el.classList.contains("sync-ground-director")) syncGroundDirector(el.value);
       if (el.classList.contains("sync-ground-phone")) syncGroundPhone(el.value);
       if (el.classList.contains("sync-ground-email")) syncGroundEmail(el.value);
     }
   });
+
+  return { loadedCount: cleanRecords.length, appliedCount };
 }
 
 let isLoadingFromSheet = false;
@@ -456,19 +476,44 @@ function saveFieldsToSheet(showAlert = true) {
   const records = getFieldRecords();
   setStatus("Saving...");
 
-  callWebAppJsonp({
+  // Use POST through a hidden iframe. This avoids a too-long JSONP URL when
+  // there are many fields, which is what causes "Could not load Google Apps Script response".
+  let iframe = document.getElementById("hiddenCloudSaveFrame");
+  if (!iframe) {
+    iframe = document.createElement("iframe");
+    iframe.id = "hiddenCloudSaveFrame";
+    iframe.name = "hiddenCloudSaveFrame";
+    iframe.style.display = "none";
+    document.body.appendChild(iframe);
+  }
+
+  const form = document.createElement("form");
+  form.method = "POST";
+  form.action = GOOGLE_SHEET_WEB_APP_URL;
+  form.target = "hiddenCloudSaveFrame";
+  form.style.display = "none";
+
+  const fields = {
     action: "saveFields",
     token: GOOGLE_SHEET_SAVE_TOKEN,
     payload: JSON.stringify(records)
-  }, response => {
-    if (response && response.ok) {
-      setStatus("Saved to Google Sheet");
-    } else {
-      const msg = response && response.error ? response.error : "Save failed";
-      setStatus(msg);
-      if (showAlert) alert(msg);
-    }
+  };
+
+  Object.entries(fields).forEach(([name, value]) => {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.name = name;
+    input.value = value;
+    form.appendChild(input);
   });
+
+  iframe.onload = () => {
+    setStatus(`Save sent to Google Sheet (${records.length} fields)`);
+  };
+
+  document.body.appendChild(form);
+  form.submit();
+  form.remove();
 }
 
 function loadFieldsFromSheet(showAlert = false) {
@@ -487,8 +532,8 @@ function loadFieldsFromSheet(showAlert = false) {
 
     isLoadingFromSheet = true;
     try {
-      applyFieldRecords(response.records || []);
-      setStatus("Loaded from Google Sheet");
+      const result = applyFieldRecords(response.records || []);
+      setStatus(`Loaded ${result.appliedCount}/${result.loadedCount} fields from Google Sheet`);
     } finally {
       isLoadingFromSheet = false;
     }
