@@ -15,7 +15,7 @@
     <button class="primary" onclick="saveFieldsToSheet()">Save to Google Sheet</button>
     <button onclick="loadFieldsFromSheet(false)">Load from Google Sheet</button>
     <button onclick="window.print()">Print</button>
-    <span id="saveStatus" style="font-size:11px;color:#555;min-width:180px;">Starting...</span>
+    <span id="saveStatus" style="font-size:11px;color:#555;min-width:260px;">Starting fields-only v2...</span>
   </div>
 </header>
 <main>
@@ -378,25 +378,31 @@ function getFieldRecords() {
   });
 }
 
+function normalizeFieldKey(value) {
+  return String(value == null ? "" : value).trim().replace(/\s+/g, " ");
+}
+
 function applyFieldRecords(records) {
   assignStableFieldIds();
 
   const cleanRecords = (records || [])
-    .filter(record => record && (record.fieldId || record.section || record.label))
+    .filter(record => record && (record.fieldId || record.section || record.label || record.sortOrder !== undefined))
     .map(record => ({
-      fieldId: record.fieldId == null ? "" : String(record.fieldId),
-      section: record.section == null ? "" : String(record.section),
-      label: record.label == null ? "" : String(record.label),
+      fieldId: normalizeFieldKey(record.fieldId),
+      section: normalizeFieldKey(record.section),
+      label: normalizeFieldKey(record.label),
       value: record.value == null ? "" : String(record.value),
-      sortOrder: Number(record.sortOrder || 0)
+      sortOrder: Number(record.sortOrder)
     }))
-    .sort((a, b) => a.sortOrder - b.sortOrder);
+    .sort((a, b) => Number(a.sortOrder || 0) - Number(b.sortOrder || 0));
 
   const byFieldId = new Map();
+  const bySortOrder = new Map();
   const bySectionLabel = new Map();
 
   cleanRecords.forEach(record => {
     if (record.fieldId) byFieldId.set(record.fieldId, record);
+    if (!Number.isNaN(record.sortOrder)) bySortOrder.set(Number(record.sortOrder), record);
 
     const key = `${record.section}::${record.label}`;
     if (!bySectionLabel.has(key)) bySectionLabel.set(key, []);
@@ -405,18 +411,27 @@ function applyFieldRecords(records) {
 
   const usedFallbackIndexes = new Map();
   let appliedCount = 0;
+  const missing = [];
 
   Array.from(document.querySelectorAll("input, textarea, select")).forEach(el => {
-    let record = byFieldId.get(el.dataset.fieldId);
+    const htmlFieldId = normalizeFieldKey(el.dataset.fieldId);
+    const htmlSortOrder = Number(el.dataset.sortOrder);
+    const sectionLabelKey = `${normalizeFieldKey(el.dataset.section)}::${normalizeFieldKey(el.dataset.label)}`;
 
-    // Fallback: match your sheet's Section + Label columns in sorted order.
-    // This keeps loading working even if a field number shifts later.
+    // 1. Exact FieldId match, e.g. Incident Commander::Name::1
+    let record = byFieldId.get(htmlFieldId);
+
+    // 2. SortOrder match. This handles older sheets where FieldId text drifted but row order is right.
+    if (!record && !Number.isNaN(htmlSortOrder)) {
+      record = bySortOrder.get(htmlSortOrder);
+    }
+
+    // 3. Section + Label fallback in sorted order.
     if (!record) {
-      const key = `${el.dataset.section || ""}::${el.dataset.label || ""}`;
-      const list = bySectionLabel.get(key) || [];
-      const used = usedFallbackIndexes.get(key) || 0;
+      const list = bySectionLabel.get(sectionLabelKey) || [];
+      const used = usedFallbackIndexes.get(sectionLabelKey) || 0;
       record = list[used];
-      usedFallbackIndexes.set(key, used + 1);
+      usedFallbackIndexes.set(sectionLabelKey, used + 1);
     }
 
     if (record) {
@@ -426,10 +441,16 @@ function applyFieldRecords(records) {
       if (el.classList.contains("sync-ground-director")) syncGroundDirector(el.value);
       if (el.classList.contains("sync-ground-phone")) syncGroundPhone(el.value);
       if (el.classList.contains("sync-ground-email")) syncGroundEmail(el.value);
+    } else {
+      missing.push(htmlFieldId);
     }
   });
 
-  return { loadedCount: cleanRecords.length, appliedCount };
+  console.log("ICS load records from sheet:", cleanRecords);
+  console.log("ICS HTML field IDs:", Array.from(document.querySelectorAll("input, textarea, select")).map(el => el.dataset.fieldId));
+  if (missing.length) console.warn("ICS fields with no matching sheet row:", missing);
+
+  return { loadedCount: cleanRecords.length, appliedCount, missingCount: missing.length };
 }
 
 let isLoadingFromSheet = false;
@@ -465,19 +486,20 @@ function callWebAppJsonp(params, callback) {
   script.onerror = () => {
     window.clearTimeout(timeout);
     cleanup();
-    callback({ ok: false, error: "Could not load Google Apps Script response" });
+    callback({ ok: false, error: "Could not load Google Apps Script response. This is a load/JSONP failure, not the field-matching code." });
   };
 
   script.src = url.toString();
   document.body.appendChild(script);
 }
 
-function saveFieldsToSheet(showAlert = true) {
+function saveFieldsToSheet(showAlert = false) {
   const records = getFieldRecords();
-  setStatus("Saving...");
+  setStatus(`Saving ${records.length} fields...`);
 
-  // Use POST through a hidden iframe. This avoids a too-long JSONP URL when
-  // there are many fields, which is what causes "Could not load Google Apps Script response".
+  // Apps Script web apps do not reliably allow normal browser fetch() from GitHub Pages.
+  // A normal HTML form POST to a hidden iframe is the most reliable cross-domain save method.
+  // The iframe response cannot be read by the page, so this page verifies by loading after save.
   let iframe = document.getElementById("hiddenCloudSaveFrame");
   if (!iframe) {
     iframe = document.createElement("iframe");
@@ -486,6 +508,10 @@ function saveFieldsToSheet(showAlert = true) {
     iframe.style.display = "none";
     document.body.appendChild(iframe);
   }
+
+  iframe.onload = () => {
+    setStatus(`Save submitted (${records.length} fields). Click Load to verify.`);
+  };
 
   const form = document.createElement("form");
   form.method = "POST";
@@ -496,7 +522,8 @@ function saveFieldsToSheet(showAlert = true) {
   const fields = {
     action: "saveFields",
     token: GOOGLE_SHEET_SAVE_TOKEN,
-    payload: JSON.stringify(records)
+    payload: JSON.stringify(records),
+    cacheBust: String(Date.now())
   };
 
   Object.entries(fields).forEach(([name, value]) => {
@@ -506,10 +533,6 @@ function saveFieldsToSheet(showAlert = true) {
     input.value = value;
     form.appendChild(input);
   });
-
-  iframe.onload = () => {
-    setStatus(`Save sent to Google Sheet (${records.length} fields)`);
-  };
 
   document.body.appendChild(form);
   form.submit();
@@ -521,7 +544,8 @@ function loadFieldsFromSheet(showAlert = false) {
 
   callWebAppJsonp({
     action: "loadFields",
-    token: GOOGLE_SHEET_SAVE_TOKEN
+    token: GOOGLE_SHEET_SAVE_TOKEN,
+    cacheBust: String(Date.now())
   }, response => {
     if (!response || !response.ok) {
       const msg = response && response.error ? response.error : "Load failed";
@@ -533,7 +557,7 @@ function loadFieldsFromSheet(showAlert = false) {
     isLoadingFromSheet = true;
     try {
       const result = applyFieldRecords(response.records || []);
-      setStatus(`Loaded ${result.appliedCount}/${result.loadedCount} fields from Google Sheet`);
+      setStatus(`Loaded ${result.appliedCount}/${result.loadedCount} fields from Google Sheet (${result.missingCount} unmatched)`);
     } finally {
       isLoadingFromSheet = false;
     }
