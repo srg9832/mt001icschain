@@ -334,7 +334,34 @@ function addMemberRow(button) {
   Saving the full HTML of dynamic areas is necessary because the site can add
   divisions, aircrews, teams, ICC managers, radio operators, etc.
 */
+function preserveInputValuesBeforeSave() {
+  document.querySelectorAll("input, textarea, select").forEach(el => {
+    if (el.tagName === "TEXTAREA") {
+      el.textContent = el.value || "";
+    } else if (el.tagName === "SELECT") {
+      Array.from(el.options).forEach(option => {
+        if (option.selected) {
+          option.setAttribute("selected", "selected");
+        } else {
+          option.removeAttribute("selected");
+        }
+      });
+    } else if (el.type === "checkbox" || el.type === "radio") {
+      if (el.checked) {
+        el.setAttribute("checked", "checked");
+      } else {
+        el.removeAttribute("checked");
+      }
+      el.setAttribute("value", el.value || "");
+    } else {
+      el.setAttribute("value", el.value || "");
+    }
+  });
+}
+
 function collectBoardState() {
+  preserveInputValuesBeforeSave();
+
   return {
     version: "ics-google-sheet-only-v1",
     mainHtml: document.getElementById("mainChart").innerHTML,
